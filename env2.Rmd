@@ -1,0 +1,404 @@
+---
+title: "Enviromental characterization of North Atlantic and Arctic stations"
+subtitle: "Ordination, Clustering and outliers detection"
+author: "Lucia Campese"
+date: "Jan-Feb 2021"
+output:
+  html_document:
+    code_folding: hide
+---
+
+  ```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+<style>
+.column-left{
+  float: left;
+  width: 50%;
+  text-align: left;
+}
+.column-right{
+  float: right;
+  width: 50%;
+  text-align: right;
+}
+</style>
+  
+<br>
+
+### Aim
+The aim is to characterize the study site from an environmental point of view using ordination and clustering methods, thus providing an overview of relationships between objects and variables. This is a starting point for following analyses, since it allows to note trends, groupings, key variables, and potential outliers.
+
+The results of this step will be 
+
++ **1.** interpreted in the light of what we expect in terms of salinity, temperature and nutrient gradients from current knowledge of oceanic currents;
+
++ **2.** compared to patterns in OTUs/genes.
+
+
+<br>
+
+### Dataset
+##### Data: TARA Oceans and Tara Oceans Polar circle environmental data
+##### Study site: Atlantic and Arctic Ocean stations, from station 143 to 196 [*]
+[*] Note: We exclude stations from 201 to 210 because they are mainly influenced by outflowing currents from the Arctic Ocean.
+
+
+### Study site (add currents)
+
+<div class="column-left">
+```{r warning=FALSE, message=FALSE, cache=FALSE, fig.align='center', fig.height=8, fig.width=8}
+library(tidyverse)
+data("wrld_simpl", package = "maptools")
+x_lines <- seq(-120,180, by = 60)
+env_data <- readxl::read_xlsx("C:/Users/Userszn/Documents/PhD/script/NAO_AO_transition/Environmental_Analysis/Environmental_parameters_atlantification_usingFeb23.xlsx")
+
+
+ggplot() +
+  geom_polygon(data = wrld_simpl, aes(x = long, y = lat, group = group), fill = "grey", colour = "black", alpha = 0.8) +  # Convert to polar coordinates
+  coord_map("ortho", orientation = c(90, 0, 0)) +
+  scale_y_continuous(breaks = seq(25, 90, by = 5), labels = NULL) +  # Removes Axes and labels
+  scale_x_continuous(breaks = NULL) +
+  xlab("") +
+  ylab("") +  # Adds labels
+  geom_text(aes(x = 180, y = seq(25, 85, by = 10), hjust = -0.2, label = paste0(seq(25, 85, by = 10), "°N"))) +
+  geom_text(aes(x = x_lines, y = 39, label = c("120°W", "60°W", "0°", "60°E", "120°E", "180°W"))) +  # Adds axes
+  geom_hline(aes(yintercept = 25), size = 1)  +
+  geom_segment(aes(y = 25, yend = 90, x = x_lines, xend = x_lines), linetype = "dashed") +  # Change theme to remove axes and ticks
+  theme(panel.background = element_blank(),
+        panel.grid.major = element_line(size = 0.25, linetype = 'dashed',
+                                        colour = "black"),
+        axis.ticks=element_blank()) +
+  geom_point(aes(x=env_data$Longitude, y=env_data$Latitude), shape=19, fill="blue", color="blue", size=3) +
+  ggrepel::geom_label_repel(aes(x=env_data$Longitude, y=env_data$Latitude, label = env_data$Station))
+
+
+```
+</div>
+<div class="column-right">
+![Arctic Ocean Currents Map (from arcticportal.org)](C:/Users/Userszn/Documents/PhD/script/NAO_AO_transition/Environmental_Analysis/Hafstraumar_source_AP.jpg)
+</div>
+
+<br>
+
+<br>
+
+### Workflow
+
+
+<br>
+
+#### **Choosing descriptors**
+
+<br>
+
+We want to choose descriptors important for characterizing the stations. Most of ordination techniques base on some assumptions (e.g. multinormality, linearity/unimodality); we therefore want to explore the descriptors chosen to see if they agree with assumptions.
+
+
+```{r, warning=FALSE, message=FALSE, cache=FALSE, fig.align='center'}
+env_data_1 <- env_data %>% 
+  mutate(Station = as.character(Station)) %>% 
+  column_to_rownames("Station") %>% 
+  select(SSD:NO3_woa) %>% 
+  as.data.frame()
+```
+
+
+<br>
+
+Actual table of descriptors (still updating):
+
+
+  Variable         |              Method
+------------------ | --------------------------------------
+Temperature        |       measured in situ 
+Salinity           |       measured in situ
+Sunshine duration  |  calculated from US Naval Observatory
+Nitrate            |     extractred from WOA18
+Iron               |     calculated from PISCES model
+Phosphate          |       measured in situ [1]
+Silicate           |       measured in situ [1]
+
+[1] NAs are replaced eith values from WOA18
+
+
+
+#### **Bivariate scatterplots**
+
+<br>
+
+First I visualize the relation between each pair of predictors, with bivariate scatter plots, correlation ellipses and confidence intervals below the diagonal, histograms and density plots on the diagonal, and the Spearman correlation above the diagonal, with astricks indicating the significance of correlations.
+Outlier stations are highlighted in light blue (St.180), yellow (St.193) and green (St.194). 
+
+
+```{r warning=FALSE, message=FALSE, cache=FALSE, fig.align='center', fig.height=10, fig.width=12}
+library(psych)
+### handling outliers 
+# The psych package contains a function 
+#that quickly calculates and plots MDs:
+D2 <- outlier(env_data_1, plot = FALSE)
+
+#We see 5 outlier stations highlighted. However they do not seem so distant from the others, except for the station 194. Also, most of the points, fall below or after the
+#line. The behaviour is strange, thus we might prefer a more formal test of outliers by using a cut-off score 
+#for MD. Here, I'll recalcuate the MDs using the mahalanobis function and identify those that fall above the 
+#cut-off score for a chi-square with k degrees of freedom (ncol in case I want to add or remove variables later):
+md <- mahalanobis(env_data_1, center = colMeans(env_data_1),
+                  cov = cov(env_data_1))
+
+alpha <- 0.001
+cutoff <- (qchisq(p = 1 - alpha, df = ncol(env_data_1)))
+names_outliers_MH <- which(md > cutoff)
+###col cutoff calcolato così, non escludo nessuna stazione. 
+##guardiamo a occhio:
+D2_values_df <- as.data.frame(D2) %>% 
+  rownames_to_column("station")
+
+#vedo a occhio che potrei applicare un cutoff > 18 per evidenziare la 196 (e plottarla in giallo)  e un cutoff > 21 per evidenziare la 194 (e plottarla in verde)
+D2_env_df <- data.frame(env_data_1, D2)
+
+mycol <- case_when(D2_env_df$D2 <= 17 ~ "blue",
+                   (D2_env_df$D2 > 17 & D2_env_df$D2 < 19) ~ "yellow",
+                   (D2_env_df$D2 > 19 & D2_env_df$D2 < 19.4) ~ "aquamarine",
+                   TRUE ~ "green3")
+
+pairs.panels(D2_env_df[,-8], #remove the D2 column 
+             bg = mycol,
+             #bg=c("blue","yellow")[(D2 > 18)+1],
+             pch=21,
+             method = "spearman",
+             hist.col = "#00AFBB",
+             density = TRUE,  # show density plots
+             ellipses = TRUE, # show correlation ellipses
+            # ci = TRUE, #CI: range in which my Corr.estimate 95% of times. The bigger it is, the bigger the uncertainity.
+             stars = TRUE,
+             loess = TRUE)
+
+```
+
+##### Results:
+
++ Variables never follow a normal distribution. 
++ Some pairs of variables show a strong or moderate correlation, both negatively and positively:
+
+<br>
+
+
+Variable pair  | Correlation strenght  | Correlation sign   
+-------------- | --------------------- | ----------------- 
+Temp - Sal     | high                  | positive
+Sal - Iron     | high                  | negative
+Temp - SSD     | high                  | negative
+Temp - PO4     | moderate              | negative
+Temp - Iron    | moderate              | negative
+Sal - PO4      | moderate              | negative
+Sal - SSD      | moderate              | negative
+PO4 - SiOH4    | moderate              | positive 
+
+<br>
+
++ Should we remove highly correlated variables? 
+
+<br>
+
+
+<br>
+
+#### **Handling outliers**
+
+<br>
+From a visual inspection, it seems that three stations are clear outliers respectively for iron (light blue dot), phosphate and silicate (yellow dot) and salinity (green dot), but they do not behave as outliers for most of the other variables.
+
+In order to identify and deal with outliers in a more rigorous manner, I apply the **Mahalanobis Distance** (MD), that calculates the distance of each case from the central mean. Large D2 values, compared to the expected Chi Square values indicate an unusual response pattern. 
+
+### {.tabset}
+
+#### QQ plot
+```{r m1, warning=FALSE, message=FALSE, cache=FALSE, fig.align='center'}
+outlier(env_data_1, plot = TRUE)
+```
+
+#### D2 per station
+
+```{r m2, warning=FALSE, message=FALSE, cache=FALSE, fig.align='center'}
+library(ggpubr)
+ggdensity(D2_values_df, 
+          x = "D2", y = "..count..",
+          #xlab = "Number of citation",
+          #ylab = "Number of genes",
+          #fill = "lightgray", color = "black",
+          label = "station", repel = TRUE,
+          main = "Density plot of D2")
+# font.label = list(color= "citation_index"))#,
+#font.label = list(color= "citation_index"),
+#xticks.by = 20, # Break x ticks by 20
+#gradient.cols = c("blue", "red"),
+#legend = c(0.7, 0.6),                                 
+#legend.title = ""       # Hide legend title
+#)
+```
+###
+
+##### Results:
+
+The 3 outliers have the highest D2 values.
+Note: stations with similar D2 values *are not* necessarily similar to each other. To look at how stations group together according to Mahalanobis distance, we have to calculate it *pariwise*, and apply a cluster analysis.
+
+But what if we apply an ordination technique to the raw data?
+
+Let's do a Principal Component Analysis.
+
+<br>
+
+#### **Principal Component Analysis**
+
+### PCA {.tabset}
+
+#### Biplot
+
+```{r a1, warning=FALSE, message=FALSE, cache=FALSE, fig.align='center', fig.width=10, fig.height=8}
+
+library(vegan)
+
+pca_env <- rda(env_data_1,
+               scale=TRUE) #scale=T bases the PCA on the correlation matrix
+
+library(ade4)
+library(factoextra)
+library(FactoMineR)
+#dudi. #dudi.pca con scannf=F e nf=2
+#(dudi.pca e'  la funzione di ade4 per calcolare una PCA, stabilisci a mano che vuoi solo due componenti)
+pca_env_dudi <- dudi.pca(env_data_1, scannf=F, nf=2)
+
+
+biplot(pca_env, #A biplot is plot which aims to represent both the observations and variables of a matrix of multivariate data on the same plot.
+       choices = c(1, 2),
+       scaling = 2, #Correlation biplot, scaling 2
+       display = c("sites", "species"), 
+       col = c(1,2),
+       correlation = FALSE)
+
+#How to interpret it:
+#(1) Distances among objects in the biplot are approximations of
+#their Mahalanobis distances in multidimensional space; they are not approximations of
+#their Euclidean distances.
+#(2) Projecting an object at right angle on a descriptor approximates the position of the object along that descriptor.
+#(3) The length of the projection of a descriptor in reduced space is an approximation of its standard deviation. 
+#(4) The angles between descriptors in the biplot reflect their correlations.(se p=q. in ogni caso
+#le loro direzioni indicano se la correlazione è positiva o negativa)
+
+```
+
+
+##### Results:
+
+The PCA biplot (i.e. plot of both objects and predictors) seems to agree with geographic distribution of stations.
+
+#### Correlation circle
+
+```{r a3, warning=FALSE, message=FALSE, cache=FALSE, fig.align='center'}
+
+s.corcircle(pca_env_dudi$co) #performs the scatter diagram of a correlation circle.
+```
+
+###
+
+##### Diagnostics:
+
+### {.tabset}
+
+#### Screeplot
+```{r warning=FALSE, message=FALSE, cache=FALSE, fig.align='center'}
+
+#Quanta varianza stiamo spiegando con i due assi?
+fviz_screeplot(pca_env_dudi, addlabels = T, ylim = c(0, 50))
+pca_env_summary <- summary(pca_env)#$CA[[1]])
+
+#pca_env_summary$cont
+```
+
++ the first two PCs explain the 71.3% of the variance.
+
+
+#### Stressplot
+```{r warning=FALSE, message=FALSE, cache=FALSE, fig.align='center'}
+
+stressplot(pca_env)
+#The goodness of fit for data reduction techniques can be easily assessed with Shepard diagrams. 
+#A Shepard diagram compares how far apart your data points are before and after you transform them 
+#(ie: goodness-of-fit) as a scatter plot.
+
+```
+
++ The stressplot shows if the distances among objects are well preserved in the reduced space. In the graph several points lie on the diagonal, but most of them lie in the inferior triangle, showing that the distance between projected data is always lower than the input matrix distance. This means that with the PCA we are often underestimating the distances between points and the projection has the bias of showing as close things that are actually more distant.
+
+###
+
+### {.tabset}
+
+<br>
+
+Let's see how far from linearity the different variables are
+
+#### PC1
+<div class="column-left">
+```{r b1a, warning=FALSE, message=FALSE, cache=FALSE, fig.align='center'}
+
+#estraiamo i loadings: loading = weight == eigenvector
+loadings <- scores (pca_env, display = 'species', scaling = 0)
+
+score(pca_env_dudi, 1)
+```
+</div>
+<div class="column-right">
+```{r b1b, warning=FALSE, message=FALSE, cache=FALSE, fig.align='center'}
+
+#sort (abs (loadings[,1]), decreasing = TRUE)
+# Contributions of variables to PC1
+fviz_contrib(pca_env_dudi, choice = "var", axes = 1, top = 10)
+```
+</div>
+
+#### PC2 
+<div class="column-left">
+```{r b2a, warning=FALSE, message=FALSE, cache=FALSE, fig.align='center'}
+score(pca_env_dudi, 2)
+```
+</div>
+<div class="column-right">
+```{r b2b, warning=FALSE, message=FALSE, cache=FALSE, fig.align='center'}
+#sort (abs (loadings[,2]), decreasing = TRUE)
+# Contributions of variables to PC2
+fviz_contrib(pca_env_dudi, choice = "var", axes = 2, top = 10)
+
+#(stiamo cercando di guardare quanto lontane dalla linearita' sono le diverse variabili)
+
+#X = dato scalato: row score == PC1 score: la coordinata di quella stazione sull’asse PC1
+#Y = dato non scalato
+#Ferro ed NO2 non vanno molto bene
+#Confronta questo grafico con l’output di sort() blabla di ieri, che ti ordina le variabili per 
+#importanza per la PC1 e PC2. 
+#A un certo punto O2 smette di diventare informativo. (questo si vede dal grafico).
+```
+</div>
+
+<br>
+
+###
+
+<br>
+
+<br> 
+
+<br> 
+
+### **Conclusion**
+
+The projection of the data with PCA tells us that there is a structure among stations. There are groups of station that we can characterize. One of the main aims of the PCA is to reduce the number of variables considered in the analysis: we did it, because with the first two principal components explain around the 71.3% of the total variance.
+
+
+
+
+
+
+
