@@ -215,7 +215,7 @@ In order to identify and deal with outliers in a more rigorous manner, I apply t
 
 #### QQ plot
 ```{r m1, warning=FALSE, message=FALSE, cache=FALSE, fig.align='center'}
-outlier(env_data_1, plot = TRUE)
+D2 <- outlier(env_data_1, plot = TRUE)
 ```
 
 #### D2 per station
